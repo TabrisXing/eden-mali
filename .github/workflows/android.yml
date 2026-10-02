@@ -85,6 +85,17 @@ jobs:
             sdkmanager --list_installed || true
           } 2>&1 | tee -a build.log
 
+      - name: Install host tools
+        run: |
+          set -euo pipefail
+          {
+            # src/video_core/host_shaders/CMakeLists.txt:105 hard-fails without
+            # glslangValidator on PATH.
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends glslang-tools
+            glslangValidator --version | head -2
+          } 2>&1 | tee -a build.log
+
       - name: Toolchain versions
         run: |
           set -euo pipefail
@@ -98,7 +109,7 @@ jobs:
         run: |
           set -o pipefail
           chmod +x .ci/android/build.sh
-          .ci/android/build.sh -t standard -b RelWithDebInfo 2>&1 | tee build.log
+          .ci/android/build.sh -t standard -b RelWithDebInfo 2>&1 | tee -a build.log
 
       - name: Collect the log tail
         if: always()
