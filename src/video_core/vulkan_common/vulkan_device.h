@@ -328,6 +328,7 @@ public:
         case VK_DRIVER_ID_ARM_PROPRIETARY:
         case VK_DRIVER_ID_SAMSUNG_PROPRIETARY:
         case VK_DRIVER_ID_MESA_TURNIP:
+        case VK_DRIVER_ID_MESA_PANVK:
             return true;
         default:
             return false;
