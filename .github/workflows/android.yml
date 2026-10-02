@@ -109,7 +109,21 @@ jobs:
         run: |
           set -o pipefail
           chmod +x .ci/android/build.sh
-          .ci/android/build.sh -t standard -b RelWithDebInfo 2>&1 | tee -a build.log
+          # The SDL Java sources are generated into
+          # externals/generated/sdl/java by the C++ configure step, and the
+          # Kotlin compile does not depend on it: when the compile wins the race
+          # the build dies with "Unresolved reference: libsdl". The retry reuses
+          # whatever the previous attempt generated.
+          for attempt in 1 2 3; do
+            echo "== build attempt $attempt ==" | tee -a build.log
+            if .ci/android/build.sh -t standard -b RelWithDebInfo 2>&1 | tee -a build.log; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "== build failed after 3 attempts ==" | tee -a build.log
+              exit 1
+            fi
+          done
 
       - name: Collect the log tail
         if: always()
