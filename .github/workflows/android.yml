@@ -1,0 +1,115 @@
+# SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Android RelWithDebInfo build for the mali branch. The APK and the tail of the
+# build log are published as assets of a Release whose tag is the short commit
+# hash, so they can be fetched without logging in.
+
+name: android
+
+on:
+  push:
+    branches: [ mali ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Compute the release tag
+        id: rev
+        run: echo "tag=$(git rev-parse --short=8 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc \
+                      /usr/local/lib/android/sdk/ndk \
+                      /usr/local/lib/android/sdk/system-images \
+                      /usr/local/lib/android/sdk/emulator
+          df -h /
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK packages
+        run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager --install "platform-tools" "platforms;android-36"
+          sdkmanager --install "ndk;28.2.13676358"
+          sdkmanager --install "cmake;3.31.6"
+          # AGP picks its own build-tools; install the likely ones but never let
+          # a missing one abort the job here (the build log will show it).
+          sdkmanager --install "build-tools;35.0.0" || true
+          sdkmanager --install "build-tools;36.0.0" || true
+          sdkmanager --list_installed || true
+
+      - name: Toolchain versions
+        run: |
+          java -version
+          cmake --version | head -1
+          echo "ANDROID_HOME=${ANDROID_HOME:-unset} ANDROID_NDK_HOME=${ANDROID_NDK_HOME:-unset}"
+
+      - name: Build (standard, RelWithDebInfo)
+        run: |
+          set -o pipefail
+          chmod +x .ci/android/build.sh
+          .ci/android/build.sh -t standard -b RelWithDebInfo 2>&1 | tee build.log
+
+      - name: Collect the log tail
+        if: always()
+        run: |
+          if [ -f build.log ]; then
+            tail -n 400 build.log > build-tail.log
+          else
+            echo "build.log was not produced" > build-tail.log
+          fi
+
+      - name: Publish the APK
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.rev.outputs.tag }}"
+          TAG="${TAG:-${GITHUB_SHA:0:8}}"
+          gh release view "$TAG" > /dev/null 2>&1 ||
+            gh release create "$TAG" --title "mali $TAG" \
+              --notes "Automated RelWithDebInfo build of ${GITHUB_SHA}"
+          shopt -s nullglob
+          apks=(artifacts/*.apk)
+          echo "apk count: ${#apks[@]}"
+          if [ ${#apks[@]} -gt 0 ]; then
+            gh release upload "$TAG" "${apks[@]}" --clobber
+          fi
+
+      - name: Publish the log tail
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.rev.outputs.tag }}"
+          TAG="${TAG:-${GITHUB_SHA:0:8}}"
+          gh release view "$TAG" > /dev/null 2>&1 ||
+            gh release create "$TAG" --title "mali $TAG" \
+              --notes "Automated RelWithDebInfo build of ${GITHUB_SHA}"
+          [ -f build-tail.log ] || echo "no log tail" > build-tail.log
+          gh release upload "$TAG" build-tail.log --clobber
